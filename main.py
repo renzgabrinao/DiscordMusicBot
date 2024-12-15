@@ -1,9 +1,10 @@
 from discord.ext import commands
 import discord
-import yt_dlp
+
 import os
 from dotenv import load_dotenv
-import asyncio
+
+from utils import play_next, is_playing, song_queue
 
 # Load environment variables
 load_dotenv()
@@ -12,60 +13,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", help_command=None, intents=intents)
-
-TEMP_AUDIO_FILE = "temp_audio"  # Temporary file for downloaded audio
-
-FFMPEG_OPTIONS = {
-    "options": "-vn",  # Ignore video streams
-}
-
-# Queue to manage song playback
-queue = []
-is_playing = False
-
-
-async def download_audio(url):
-    """Helper function to download audio via yt_dlp."""
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": f"{TEMP_AUDIO_FILE}.%(ext)s",
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }
-        ],
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-            print("Downloaded audio successfully.")
-    except Exception as e:
-        print(f"Failed to download audio: {e}")
-
-
-async def play_next(context):
-    """Play the next song in the queue."""
-    global is_playing
-    if queue:
-        next_song = queue.pop(0)
-        await download_audio(next_song)
-
-        # Play the downloaded song
-        if context.voice_client:
-            context.voice_client.play(
-                discord.FFmpegPCMAudio(f"{TEMP_AUDIO_FILE}.mp3", **FFMPEG_OPTIONS),
-                after=lambda e: asyncio.create_task(play_next(context)) if e is None else None,
-            )
-            is_playing = True
-            await context.send(f"Now playing: {next_song}")
-        else:
-            await context.send("No voice client available to play the audio.")
-    else:
-        is_playing = False
-
 
 @bot.command(name="play")
 async def play(context, url: str):
@@ -84,11 +31,11 @@ async def play(context, url: str):
             return
 
     # Add the song to the queue
-    queue.append(url)
+    song_queue.append(url)
     await context.send(f"Added to queue: {url}")
 
-    # If nothing is currently playing, trigger playback
     global is_playing
+    # Only start playback if nothing is currently playing
     if not is_playing:
         await play_next(context)
 
@@ -108,7 +55,7 @@ async def stop(context):
     """Stop playback and clear the queue."""
     if context.voice_client:
         context.voice_client.stop()
-        queue.clear()
+        song_queue.clear()
         global is_playing
         is_playing = False
         await context.send("Stopped playback and cleared the queue.")
@@ -122,7 +69,7 @@ async def leave(context):
     if context.voice_client:
         context.voice_client.stop()
         await context.voice_client.disconnect()
-        queue.clear()
+        song_queue.clear()
         global is_playing
         is_playing = False
         await context.send("Disconnected and cleared the queue.")
