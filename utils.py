@@ -32,6 +32,7 @@ async def download_audio(url, filename):
             }
         ],
         "quiet": True,  # Suppress yt_dlp logs
+        "cookiefile": "cookies.txt"
     }
 
     try:
