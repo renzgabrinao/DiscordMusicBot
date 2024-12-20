@@ -31,66 +31,75 @@ async def download_audio(url, filename):
                 "preferredquality": "192",
             }
         ],
-        "quiet": True,  # Suppress yt_dlp logs
-        "cookiefile": "cookies.txt"
+        "quiet": True
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            video_info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             await asyncio.to_thread(ydl.download, [url])
+
+        title = video_info.get("title", "Unknown Title")
         file_path = f"{TEMP_AUDIO_FOLDER}/{filename}.mp3"
-        print(f"Downloaded audio for {url}")
-        return file_path
+        print(f"Downloaded audio for {title} @ {url}")
+        return file_path, title
     except Exception as e:
         print(f"Failed to download audio: {e}")
-        return None
+        return None, None
 
 
 async def preload_next_song():
-    """Download the next song in the queue (if any) in advance."""
-    global preloaded_song
+    """Preload the next song in the queue."""
+    global preloaded_song, preloaded_title
 
     if song_queue:  # Check if there's a next song to preload
         next_song_url = song_queue[0]  # Peek at the next song
         song_filename = f"preload_{int(asyncio.get_event_loop().time())}"
 
         print("Preloading next song...")
-        file_path = await download_audio(next_song_url, song_filename)
+        file_path, title = await download_audio(next_song_url, song_filename)
         if file_path:
             preloaded_song = file_path
-            print(f"Preloaded next song: {preloaded_song}")
+            preloaded_title = title
+            print(f"Preloaded next song: {title}")
         else:
             print("Failed to preload the next song.")
+    else:
+        preloaded_song = None
+        preloaded_title = None
 
 
 async def play_next(context):
     """Play the next song in the queue."""
-    global is_playing, preloaded_song
+    global is_playing, preloaded_song, preloaded_title
 
     if is_playing:
-        return  # Don't interrupt an active playback
+        return
 
-    if not song_queue:
+    if not song_queue and not preloaded_song:
         await context.send("Queue is empty, playback stopped.")
         is_playing = False
         return
 
     is_playing = True
 
-    # Use preloaded song if available, else download
+    # Use preloaded song if available
     if preloaded_song:
         file_path = preloaded_song
-        preloaded_song = None  # Reset preloaded song
+        title = preloaded_title
+        preloaded_song = None
+        preloaded_title = None
+        song_queue.pop(0)  # Remove the song from the queue after using the preload
     else:
         next_song_url = song_queue.pop(0)
         song_filename = f"song_{int(asyncio.get_event_loop().time())}"
-        file_path = await download_audio(next_song_url, song_filename)
+        file_path, title = await download_audio(next_song_url, song_filename)
         if not file_path:
             await context.send("Failed to download the next song.")
             is_playing = False
             return await play_next(context)
 
-    await context.send(f"Now playing: {file_path}")
+    await context.send(f"Now playing: {title}")
 
     # Play the file
     if context.voice_client:
@@ -109,16 +118,13 @@ async def play_next(context):
 
 
 async def cleanup_and_play_next(context, file_path):
-    """Deletes the audio file and triggers the next song."""
+    """Clean up after a song finishes and play the next one."""
     global is_playing
     try:
-        # Delete the audio file
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            print(f"Deleted file: {file_path}")
+        os.remove(file_path)  # Delete the audio file after playback
+    except OSError as e:
+        print(f"Failed to delete file {file_path}: {e}")
 
-        # Play the next song
-        is_playing = False
-        await play_next(context)
-    except Exception as e:
-        print(f"Error during cleanup: {e}")
+    is_playing = False
+    await play_next(context)
+

@@ -1,7 +1,3 @@
-cookies.txt
-cookies.json
-generate_netscape.py
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
